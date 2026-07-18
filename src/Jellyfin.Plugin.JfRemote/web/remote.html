@@ -202,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.6';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.7';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -278,8 +278,12 @@
 
   // ---------- sessions ----------
   function applySessions(list){
+    // SupportsRemoteControl is advisory and gets LOST when a web tab reconnects
+    // after a server restart (only a full page reload re-posts capabilities) -
+    // so also list any session that is actively playing: its socket accepts
+    // commands regardless of the flag.
     sessions = (list || []).filter(function(s){
-      return s.SupportsRemoteControl && s.DeviceId !== devId();
+      return (s.SupportsRemoteControl || s.NowPlayingItem) && s.DeviceId !== devId();
     });
     // keep selection if still present; else prefer a playing session
     var cur = sessions.filter(function(s){ return s.Id === sel; })[0];
