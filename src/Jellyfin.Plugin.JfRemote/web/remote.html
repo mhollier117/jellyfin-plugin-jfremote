@@ -204,7 +204,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.2';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.3';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -393,16 +393,31 @@
 
   // ---------- watch-along: follow the controlled session's stream, read-only ----------
   var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-                ema:null, rateMode:0, lastSeekAt:0, suppressUntil:0, beyond:0 };
+                needSync:false, stalled:false, offCount:0, lastSeekAt:0, suppressUntil:0 };
+  // our own buffering stalls desync us without any source action: after the stall
+  // clears, schedule one catch-up seek
+  el('watchVid').addEventListener('waiting', function(){ if (watch.on) watch.stalled = true; });
+  el('watchVid').addEventListener('playing', function(){
+    if (watch.on && watch.stalled) { watch.stalled = false; watch.needSync = true; }
+  });
   function watchTrackUpdate(s){
     if (!watch.on || !s || s.Id !== sel) return;
     var np = s.NowPlayingItem;
     if (!np) { stopWatch(); return; }
     var paused = !!(s.PlayState && s.PlayState.IsPaused);
     var ticks = (s.PlayState && s.PlayState.PositionTicks) || 0;
-    // pause/resume flags arrive with socket latency - the estimate is briefly wrong
-    // around transitions, so suppress sync corrections for a moment
-    if (watch.track && watch.track.paused !== paused) watch.suppressUntil = Date.now() + 4000;
+    // EVENT-DRIVEN sync: two aligned players at 1.0x cannot drift, so we only ever
+    // resync when something actually happened on the source - a pause/resume flip,
+    // or a reported position that jumped away from dead reckoning (= a seek).
+    var prevT = watch.track;
+    if (prevT) {
+      if (prevT.paused !== paused) {
+        watch.needSync = true; watch.suppressUntil = Date.now() + 1500;
+      } else if (!paused) {
+        var expected = prevT.ticks + (Date.now() - prevT.at) * 1e4;
+        if (Math.abs(ticks - expected) > 5e7) watch.needSync = true;   // >5s jump = source seek
+      }
+    }
     // sessions only check in every ~10s - age-correct the reported position or we launch behind
     if (!paused && s.LastPlaybackCheckIn) {
       var lp = Date.parse(s.LastPlaybackCheckIn);
@@ -449,7 +464,7 @@
       v.play().catch(function(){});
       el('watchWrap').classList.remove('hidden');
       watch.startedAt = Date.now(); watch.starting = false;
-      watch.ema = null; watch.rateMode = 0; watch.lastSeekAt = 0;   // fresh sync state per stream
+      watch.needSync = false; watch.stalled = false; watch.offCount = 0; watch.lastSeekAt = 0;
     }).catch(function(e){ toast('watch failed: ' + e.message); watch.starting = false; stopWatch(); });
   }
   function watchSyncLoop(){
@@ -460,38 +475,25 @@
     if (t.paused) { if (!v.paused) v.pause(); el('watchSync').textContent = 'paused with session'; return; }
     if (v.paused) v.play().catch(function(){});
     if (v.readyState < 3) { el('watchSync').textContent = 'buffering…'; return; }  // never fight the buffer
-    if (Date.now() < (watch.suppressUntil || 0)) {         // state transition just happened - let it settle
-      if (v.playbackRate !== 1) v.playbackRate = 1;
-      watch.beyond = 0;
-      el('watchSync').textContent = 'settling…';
-      return;
-    }
-    var d = tgt - v.currentTime;
-    watch.ema = (watch.ema == null) ? d : (watch.ema * 0.7 + d * 0.3);  // smooth estimate jitter
-    var e2 = watch.ema;
-    var sinceSeek = Date.now() - (watch.lastSeekAt || 0);
-    if (Math.abs(e2) > 10 && sinceSeek > 6000) {          // truly lost (she seeked): one jump, then settle
+    if (v.playbackRate !== 1) v.playbackRate = 1;          // steady state NEVER trims playback rate
+    var now = Date.now();
+    // event-scheduled resync (source pause/resume/seek, our own stall recovery): one clean seek
+    if (watch.needSync && now >= (watch.suppressUntil || 0)) {
+      watch.needSync = false;
       v.currentTime = Math.max(0, tgt);
-      watch.lastSeekAt = Date.now(); watch.ema = 0; watch.rateMode = 0; watch.beyond = 0;
-      watch.suppressUntil = Date.now() + 4000;
-      v.playbackRate = 1;
-      el('watchSync').textContent = 'jumped to live';
+      watch.lastSeekAt = now; watch.offCount = 0;
+      el('watchSync').textContent = 'resynced';
       return;
     }
-    // 3% trim with hysteresis: engage only after PERSISTENT >4s drift, hold until inside 1.25s
-    if (!watch.rateMode) {
-      if (Math.abs(e2) > 4) { watch.beyond = (watch.beyond || 0) + 1; } else { watch.beyond = 0; }
-      if (watch.beyond >= 3) {                            // ~3s of confirmed real drift
-        watch.rateMode = (e2 > 0) ? 1 : -1;
-        v.playbackRate = (e2 > 0) ? 1.03 : 0.97;
-        watch.beyond = 0;
-      } else if (v.playbackRate !== 1) { v.playbackRate = 1; }
-    } else if (watch.rateMode === 1) {
-      if (e2 < 1.25)  { watch.rateMode = 0; v.playbackRate = 1; }
-    } else {
-      if (e2 > -1.25) { watch.rateMode = 0; v.playbackRate = 1; }
-    }
-    el('watchSync').textContent = 'sync ' + (e2 >= 0 ? '+' : '') + e2.toFixed(1) + 's' + (watch.rateMode ? ' ⇢' : '');
+    // otherwise: display only. Coarse safety net for a missed event: sustained >10s
+    // apparent offset for ~8 consecutive seconds schedules a single seek.
+    var d = tgt - v.currentTime;
+    if (Math.abs(d) > 10 && (now - (watch.lastSeekAt || 0)) > 8000) {
+      watch.offCount = (watch.offCount || 0) + 1;
+      if (watch.offCount >= 8) { watch.needSync = true; watch.offCount = 0; }
+    } else { watch.offCount = 0; }
+    el('watchSync').textContent = Math.abs(d) > 2.5
+      ? ('in sync (±' + Math.abs(d).toFixed(0) + 's est)') : 'in sync';
   }
   window.watchFull = function(){
     var v = el('watchVid');
@@ -515,7 +517,7 @@
     el('watchWrap').classList.add('hidden');
     el('watchBtn').classList.remove('on');
     watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-              ema:null, rateMode:0, lastSeekAt:0, suppressUntil:0, beyond:0 };
+              needSync:false, stalled:false, offCount:0, lastSeekAt:0, suppressUntil:0 };
     if (hadPsid) api('DELETE', '/Videos/ActiveEncodings?deviceId=' + devId() + '&playSessionId=' + hadPsid).catch(function(){});
   };
 
