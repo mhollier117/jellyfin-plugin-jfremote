@@ -1,0 +1,13 @@
+{
+  "guid": "e3d9b3a1-52c7-4b6e-9d1a-6f4a8c2b7e91",
+  "category": "General",
+  "owner": "",
+  "assemblies": [],
+  "name": "JF Remote",
+  "targetAbi": "10.11.0.0",
+  "version": "1.0.0.0",
+  "description": "Control any Jellyfin session from your phone.",
+  "autoUpdate": false,
+  "status": "Active",
+  "overview": "Standalone mobile remote UI at /JfRemote/"
+}

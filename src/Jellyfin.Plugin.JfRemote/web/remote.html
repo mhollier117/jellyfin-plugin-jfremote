@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JF Remote">
+<link rel="apple-touch-icon" href="remote-icon.png">
+<meta name="theme-color" content="#101418">
+<title>JF Remote</title>
+<style>
+  :root{ --bg:#101418; --card:#1c2228; --card2:#232b33; --fg:#e8edf2; --dim:#8a97a3;
+         --accent:#00a4dc; --accent2:#0288b7; --danger:#c0392b; --ok:#27ae60; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+     -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  input{ -webkit-user-select:text; user-select:text; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  body{ padding:max(12px,env(safe-area-inset-top)) 12px max(20px,env(safe-area-inset-bottom)); max-width:520px; margin:0 auto; }
+  h1{ font-size:1.05rem; font-weight:600; letter-spacing:.04em; margin:6px 2px 12px; color:var(--dim); }
+  h1 b{ color:var(--fg); }
+  .hidden{ display:none !important; }
+
+  /* login */
+  #login{ background:var(--card); border-radius:14px; padding:18px; }
+  #login input{ width:100%; padding:12px; margin:6px 0; border-radius:9px; border:1px solid #2e3a44;
+    background:var(--bg); color:var(--fg); font-size:1rem; }
+  #login button{ width:100%; padding:13px; margin-top:10px; border:0; border-radius:9px;
+    background:var(--accent); color:#fff; font-size:1rem; font-weight:600; }
+  #loginErr{ color:#ff7675; font-size:.85rem; min-height:1.2em; margin-top:6px; }
+
+  /* session picker */
+  #sessBtn{ display:flex; align-items:center; justify-content:space-between; width:100%;
+    background:var(--card); border:0; border-radius:14px; color:var(--fg); padding:13px 16px;
+    font-size:.95rem; margin-bottom:10px; }
+  #sessBtn:active{ background:var(--card2); }
+  #sessBtn .who{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+  #sessBtn .chev{ color:var(--dim); margin-left:10px; flex:0 0 auto; }
+  .live{ color:var(--ok); margin-right:7px; }
+
+  /* now playing card */
+  #np{ background:var(--card); border-radius:16px; overflow:hidden; }
+  #poster{ width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#0a0d10; }
+  #meta{ padding:14px 16px 4px; }
+  #title{ font-size:1.05rem; font-weight:650; line-height:1.3; }
+  #sub{ color:var(--dim); font-size:.85rem; margin-top:3px; }
+  #idle{ padding:34px 16px; text-align:center; color:var(--dim); }
+
+  /* progress */
+  #barWrap{ padding:12px 16px 2px; }
+  #bar{ position:relative; height:22px; display:flex; align-items:center; }
+  #bar .track{ position:absolute; left:0; right:0; height:5px; border-radius:3px; background:#2e3a44; }
+  #bar .fill{ position:absolute; left:0; height:5px; border-radius:3px; background:var(--accent); width:0%; }
+  #times{ display:flex; justify-content:space-between; color:var(--dim); font-size:.75rem; font-variant-numeric:tabular-nums; }
+
+  /* controls */
+  #ctrls{ display:flex; justify-content:space-between; align-items:center; padding:10px 14px 16px; gap:6px; }
+  .btn{ border:0; background:var(--card2); color:var(--fg); border-radius:14px; font-size:1.05rem;
+    padding:14px 0; flex:1; font-weight:600; }
+  .btn:active{ background:#2d3843; }
+  #playpause{ flex:1.6; background:var(--accent); font-size:1.35rem; border-radius:16px; }
+  #playpause:active{ background:var(--accent2); }
+  #row2{ display:flex; gap:6px; padding:0 14px 16px; align-items:center; }
+  .btn.small{ font-size:.85rem; padding:11px 0; color:var(--dim); }
+  .btn.sq{ flex:0 0 62px; }
+  .btn.stop{ color:#ff9d94; }
+
+  /* volume slider */
+  #vol{ flex:1; -webkit-appearance:none; appearance:none; height:36px; background:transparent; min-width:70px; }
+  #vol::-webkit-slider-runnable-track{ height:5px; border-radius:3px; background:#2e3a44; }
+  #vol::-webkit-slider-thumb{ -webkit-appearance:none; width:22px; height:22px; border-radius:50%;
+    background:var(--accent); margin-top:-8.5px; border:none; }
+  #vol::-moz-range-track{ height:5px; border-radius:3px; background:#2e3a44; }
+  #vol::-moz-range-thumb{ width:22px; height:22px; border-radius:50%; background:var(--accent); border:none; }
+
+  /* skip segment (intro/outro) */
+  #skipSeg{ display:block; margin:0 14px 12px; padding:12px; border:0; border-radius:12px;
+    background:var(--accent); color:#fff; font-weight:700; font-size:.95rem; width:calc(100% - 28px); }
+  #skipSeg:active{ background:var(--accent2); }
+
+  /* trickplay scrub preview */
+  #barWrap{ position:relative; }
+  #bar{ touch-action:none; }
+  #peek{ position:absolute; bottom:46px; transform:translateX(-50%); border-radius:8px; overflow:hidden;
+    border:2px solid #000c; box-shadow:0 6px 18px #000c; pointer-events:none; z-index:5;
+    background:#0a0d10 no-repeat; }
+  #peek .pt{ position:absolute; left:0; right:0; bottom:0; text-align:center; font-size:.7rem; color:#fff;
+    background:#000a; padding:1px 0; font-variant-numeric:tabular-nums; }
+  #row3{ display:flex; gap:6px; padding:0 14px 16px; }
+
+  /* bottom sheet */
+  #sheetWrap{ position:fixed; inset:0; background:#0009; display:flex; align-items:flex-end; z-index:10; }
+  #sheet{ background:var(--card2); width:100%; max-width:520px; margin:0 auto;
+    border-radius:18px 18px 0 0; padding:14px 10px max(18px,env(safe-area-inset-bottom));
+    max-height:70vh; overflow-y:auto; }
+  #sheet h3{ margin:2px 8px 10px; font-size:.85rem; color:var(--dim); font-weight:600;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .opt{ display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left;
+    background:none; border:0; color:var(--fg); padding:13px 10px; border-radius:10px; font-size:.95rem; }
+  .opt:active{ background:#2d3843; }
+  .opt .check{ color:var(--accent); font-weight:700; margin-left:10px; }
+  .opt .lbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* watch-along panel */
+  #watchWrap{ margin:0 0 10px; background:#000; border-radius:16px; overflow:hidden; position:relative; }
+  #watchVid{ width:100%; aspect-ratio:16/9; display:block; background:#000; }
+  #watchSync{ position:absolute; left:8px; top:8px; background:#000a; color:var(--ok);
+    font-size:.68rem; padding:4px 9px; border-radius:999px; font-variant-numeric:tabular-nums; }
+  #watchHud{ position:absolute; top:8px; right:8px; }
+  #watchHud button{ border:0; border-radius:999px; background:#000a; color:#ff9d94; font-size:.75rem; padding:6px 11px; }
+  .btn.sq.on{ background:var(--accent); color:#fff; }
+
+  /* episode strip */
+  #epsWrap{ margin-top:14px; }
+  #epsWrap h3{ margin:0 4px 8px; font-size:.8rem; color:var(--dim); font-weight:600;
+    text-transform:uppercase; letter-spacing:.05em; }
+  #eps{ display:flex; gap:8px; overflow-x:auto; scroll-snap-type:x proximity; padding:2px 2px 10px; }
+  .ep{ flex:0 0 150px; background:var(--card); border-radius:12px; overflow:hidden;
+    border:2px solid transparent; scroll-snap-align:center; padding:0; color:var(--fg); position:relative; }
+  .ep img{ width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#0a0d10; }
+  .ep .t{ font-size:.72rem; padding:6px 8px 8px; line-height:1.3; color:var(--dim);
+    text-align:left; min-height:3.1em;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .ep .t b{ color:var(--fg); }
+  .ep.cur{ border-color:var(--accent); }
+  .ep .thumb{ position:relative; }
+  .ep .now{ position:absolute; top:6px; left:6px; background:var(--accent); color:#fff;
+    font-size:.62rem; font-weight:700; padding:2px 7px; border-radius:999px; }
+  .ep .seen{ position:absolute; top:6px; right:6px; background:#000a; color:var(--ok);
+    font-size:.7rem; font-weight:700; padding:2px 6px; border-radius:999px; }
+  .ep .prog{ position:absolute; left:0; right:0; bottom:0; height:3px; background:#000a; }
+  .ep .prog i{ display:block; height:100%; background:var(--accent); }
+
+  #toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#000c; color:#fff;
+    padding:9px 16px; border-radius:999px; font-size:.85rem; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #logout{ background:none; border:0; color:var(--dim); font-size:.75rem; float:right; margin-top:8px; text-decoration:underline; }
+</style>
+</head>
+<body>
+  <h1>▶ <b>JF Remote</b> — control what's playing</h1>
+
+  <div id="login" class="hidden">
+    <input id="u" placeholder="username" autocomplete="username">
+    <input id="p" placeholder="password" type="password" autocomplete="current-password">
+    <button onclick="doLogin()">Sign in</button>
+    <div id="loginErr"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <button id="sessBtn" onclick="openSessSheet()">
+      <span class="who" id="sessLbl">finding sessions…</span><span class="chev">▾</span>
+    </button>
+    <div id="watchWrap" class="hidden">
+      <video id="watchVid" playsinline></video>
+      <span id="watchSync">sync…</span>
+      <div id="watchHud"><button onclick="watchFull()">⛶ full</button><button onclick="stopWatch()">✕ stop</button></div>
+    </div>
+    <div id="np">
+      <img id="poster" class="hidden" alt="">
+      <div id="idle">nothing playing on this session</div>
+      <div id="meta" class="hidden">
+        <div id="title"></div>
+        <div id="sub"></div>
+      </div>
+      <div id="barWrap" class="hidden">
+        <div id="peek" class="hidden"><div class="pt" id="peekT"></div></div>
+        <div id="bar"><div class="track"></div><div class="fill" id="fill"></div></div>
+        <div id="times"><span id="tCur">0:00</span><span id="tTot">0:00</span></div>
+      </div>
+      <button id="skipSeg" class="hidden" onclick="skipSegment()">Skip intro ▸</button>
+      <div id="ctrls" class="hidden">
+        <button class="btn" onclick="seekRel(-30)">−30s</button>
+        <button class="btn" onclick="ps('PreviousTrack')">⏮</button>
+        <button class="btn" id="playpause" onclick="ps('PlayPause')">⏯</button>
+        <button class="btn" onclick="ps('NextTrack')">⏭</button>
+        <button class="btn" onclick="seekRel(30)">+30s</button>
+      </div>
+      <div id="row2" class="hidden">
+        <input id="vol" type="range" min="0" max="100" value="50" aria-label="volume">
+        <button class="btn small sq" onclick="gc('ToggleMute')">mute</button>
+        <button class="btn small sq" id="watchBtn" onclick="toggleWatch()">👁</button>
+        <button class="btn small sq" onclick="sendMsg()">💬</button>
+        <button class="btn small sq stop" onclick="ps('Stop')">■</button>
+      </div>
+      <div id="row3" class="hidden">
+        <button class="btn small" onclick="openSheet('audio')">audio</button>
+        <button class="btn small" onclick="openSheet('subs')">subs</button>
+        <button class="btn small" onclick="openSheet('quality')">quality</button>
+        <button class="btn small" onclick="openSheet('speed')">speed</button>
+      </div>
+    </div>
+    <div id="epsWrap" class="hidden">
+      <h3 id="epsTitle">episodes</h3>
+      <div id="eps"></div>
+    </div>
+    <button id="logout" onclick="logout()">sign out</button>
+  </div>
+  <div id="sheetWrap" class="hidden">
+    <div id="sheet"><h3 id="sheetTitle"></h3><div id="sheetBody"></div></div>
+  </div>
+  <div id="toast"></div>
+
+<script>
+(function(){
+  'use strict';
+  var VERSION = '2026-07-18.1';   // bump on every edit - drives the stale-cache auto-reload
+  // iOS home-screen apps cache the launch document aggressively; on each launch,
+  // check the server for a newer build and reload once if found.
+  function checkUpdate(){
+    fetch(location.pathname, { cache: 'no-store' }).then(function(r){ return r.text(); })
+      .then(function(t){
+        var m = t.match(/VERSION\s*=\s*'([^']+)'/);
+        if (m && m[1] !== VERSION) {
+          var el2 = document.getElementById('toast');
+          if (el2) { el2.textContent = 'updating remote…'; el2.style.opacity = 1; }
+          setTimeout(function(){ location.replace(location.pathname + '?v=' + Date.now()); }, 900);
+        }
+      }).catch(function(){});
+  }
+  setTimeout(checkUpdate, 2500);
+  // API base: page is served at {BaseUrl}/web/remote.html (file deploy) or
+  // {BaseUrl}/JfRemote/ (plugin route) — strip our own path segment so
+  // reverse-proxy subpaths (BaseUrl, e.g. /jellyfin) work in both contexts.
+  var _cut = location.pathname.indexOf('/web/');
+  if (_cut < 0) _cut = location.pathname.indexOf('/JfRemote');
+  var BASE = _cut >= 0 ? location.origin + location.pathname.slice(0, _cut) : location.origin;
+  var LSKEY = 'jfremote_auth';
+  var auth = null, sessions = [], sel = null, pollTimer = null, lastState = null;
+
+  function el(id){ return document.getElementById(id); }
+  function toast(m){ var t = el('toast'); t.textContent = m; t.style.opacity = 1;
+    setTimeout(function(){ t.style.opacity = 0; }, 1600); }
+
+  function devId(){
+    var d = localStorage.getItem('jfremote_dev');
+    if (!d) { d = 'jfremote-' + Math.random().toString(36).slice(2, 12); localStorage.setItem('jfremote_dev', d); }
+    return d;
+  }
+  function authHeader(withToken){
+    var h = 'MediaBrowser Client="JF Remote", Device="Phone", DeviceId="' + devId() + '", Version="1.0"';
+    if (withToken && auth) h += ', Token="' + auth.token + '"';
+    return h;
+  }
+  function api(method, path, body){
+    return fetch(BASE + path, {
+      method: method,
+      headers: { 'Authorization': authHeader(true), 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r){
+      if (r.status === 401) { logout(); throw new Error('unauthorized'); }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var ct = r.headers.get('content-type') || '';
+      return ct.indexOf('json') >= 0 ? r.json() : null;
+    });
+  }
+
+  // ---------- auth ----------
+  window.doLogin = function(){
+    el('loginErr').textContent = '';
+    fetch(BASE + '/Users/AuthenticateByName', {
+      method: 'POST',
+      headers: { 'Authorization': authHeader(false), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Username: el('u').value, Pw: el('p').value })
+    }).then(function(r){ if (!r.ok) throw new Error('login failed (' + r.status + ')'); return r.json(); })
+      .then(function(j){
+        auth = { token: j.AccessToken, userId: j.User.Id, name: j.User.Name };
+        localStorage.setItem(LSKEY, JSON.stringify(auth));
+        show();
+      })
+      .catch(function(e){ el('loginErr').textContent = e.message; });
+  };
+  window.logout = function(){
+    localStorage.removeItem(LSKEY); auth = null;
+    if (pollTimer) clearInterval(pollTimer);
+    try { if (ws) ws.close(); } catch (e) {}
+    wsOk = false;
+    el('app').classList.add('hidden'); el('login').classList.remove('hidden');
+  };
+
+  // ---------- sessions ----------
+  function applySessions(list){
+    sessions = (list || []).filter(function(s){
+      return s.SupportsRemoteControl && s.DeviceId !== devId();
+    });
+    // keep selection if still present; else prefer a playing session
+    var cur = sessions.filter(function(s){ return s.Id === sel; })[0];
+    if (!cur) {
+      var playing = sessions.filter(function(s){ return s.NowPlayingItem; });
+      sel = (playing[0] || sessions[0] || {}).Id || null;
+    }
+    renderChips(); renderNow();
+  }
+  function refresh(){
+    api('GET', '/Sessions?activeWithinSeconds=960').then(applySessions).catch(function(){});
+  }
+
+  // ---------- live updates: websocket (poll is the fallback) ----------
+  var ws = null, wsOk = false;
+  function startWs(){
+    if (!auth) return;
+    try {
+      // 12.0 reads ?ApiKey= on the socket; older servers read ?api_key= - send both
+      var url = BASE.replace(/^http/, 'ws') + '/socket?ApiKey=' + auth.token +
+                '&api_key=' + auth.token + '&deviceId=' + devId();
+      ws = new WebSocket(url);
+      ws.onopen = function(){
+        wsOk = true;
+        ws.send(JSON.stringify({ MessageType: 'SessionsStart', Data: '0,1500' }));
+      };
+      ws.onmessage = function(ev){
+        var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.MessageType === 'ForceKeepAlive' || m.MessageType === 'KeepAlive') {
+          try { ws.send(JSON.stringify({ MessageType: 'KeepAlive' })); } catch (e) {}
+          return;
+        }
+        if (m.MessageType === 'Sessions' && m.Data) applySessions(m.Data);
+      };
+      ws.onclose = function(){ wsOk = false; setTimeout(function(){ if (auth) startWs(); }, 5000); };
+      ws.onerror = function(){ try { ws.close(); } catch (e) {} };
+    } catch (e) { wsOk = false; }
+  }
+
+  // instant refresh when the phone wakes / tab becomes visible again
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && auth) refresh();
+  });
+
+  function sessLabel(s, withItem){
+    var t = (s.NowPlayingItem ? '<span class="live">●</span>' : '') +
+      (s.UserName || '?') + ' · ' + (s.Client || '') + ' · ' + (s.DeviceName || '');
+    if (withItem && s.NowPlayingItem) {
+      t += ' — ' + (s.NowPlayingItem.SeriesName || s.NowPlayingItem.Name || '');
+    }
+    return t;
+  }
+  function renderChips(){
+    var lbl = el('sessLbl');
+    if (!sessions.length) { lbl.textContent = 'no controllable sessions'; return; }
+    var s = sessions.filter(function(x){ return x.Id === sel; })[0];
+    lbl.innerHTML = s ? sessLabel(s, false) : 'pick a session…';
+  }
+  window.openSessSheet = function(){
+    if (!sessions.length) { toast('no controllable sessions'); return; }
+    sheetOptions('control which session?', sessions.map(function(s){
+      return {
+        label: sessLabel(s, true),
+        sel: s.Id === sel,
+        act: function(){ sel = s.Id; closeSheet(); renderChips(); renderNow(); }
+      };
+    }));
+  };
+
+  function fmt(t){
+    var s = Math.floor(t / 10000000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+  }
+
+  function renderNow(){
+    var s = sessions.filter(function(x){ return x.Id === sel; })[0];
+    lastState = s || null;
+    var np = s && s.NowPlayingItem;
+    ['meta','barWrap','ctrls','row2','row3'].forEach(function(id){ el(id).classList.toggle('hidden', !np); });
+    el('idle').classList.toggle('hidden', !!np);
+    el('poster').classList.toggle('hidden', !np);
+    if (!np) {
+      renderEpisodes(null);
+      el('skipSeg').classList.add('hidden');
+      el('peek').classList.add('hidden');
+      if (watch.on) stopWatch();
+      return;
+    }
+
+    var t = np.SeriesName ? np.SeriesName : np.Name;
+    var sub = np.SeriesName
+      ? ('S' + (np.ParentIndexNumber || '?') + 'E' + (np.IndexNumber || '?') + ' — ' + np.Name)
+      : (np.ProductionYear || '');
+    el('title').textContent = t;
+    el('sub').textContent = sub + '   ·   ' + (s.UserName || '') + ' on ' + (s.DeviceName || s.Client);
+    el('poster').src = BASE + '/Items/' + np.Id + '/Images/Primary?maxWidth=800&api_key=' + auth.token;
+
+    var pos = (s.PlayState && s.PlayState.PositionTicks) || 0, tot = np.RunTimeTicks || 0;
+    el('fill').style.width = tot ? (pos / tot * 100) + '%' : '0%';
+    el('tCur').textContent = fmt(pos);
+    el('tTot').textContent = fmt(tot);
+    el('playpause').textContent = (s.PlayState && s.PlayState.IsPaused) ? '▶' : '⏸';
+    var vl = s.PlayState && s.PlayState.VolumeLevel;
+    if (vl != null && !volDrag) el('vol').value = vl;
+    updateSegments(s, np);
+    watchTrackUpdate(s);
+    renderEpisodes(np);
+  }
+
+  // ---------- watch-along: follow the controlled session's stream, read-only ----------
+  var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
+                ema:null, rateMode:0, lastSeekAt:0 };
+  function watchTrackUpdate(s){
+    if (!watch.on || !s || s.Id !== sel) return;
+    var np = s.NowPlayingItem;
+    if (!np) { stopWatch(); return; }
+    var paused = !!(s.PlayState && s.PlayState.IsPaused);
+    var ticks = (s.PlayState && s.PlayState.PositionTicks) || 0;
+    // sessions only check in every ~10s - age-correct the reported position or we launch behind
+    if (!paused && s.LastPlaybackCheckIn) {
+      var lp = Date.parse(s.LastPlaybackCheckIn);
+      if (isFinite(lp)) ticks += Math.min(30000, Math.max(0, Date.now() - lp)) * 1e4;
+    }
+    watch.track = { ticks: ticks, at: Date.now(), paused: paused };
+    if (np.Id !== watch.itemId && !watch.starting) startWatchStream(np, s);   // follows autoplay
+  }
+  function watchTarget(){
+    var t = watch.track; if (!t) return null;
+    return t.ticks / 1e7 + (t.paused ? 0 : (Date.now() - t.at) / 1000);
+  }
+  function startWatchStream(np, s){
+    watch.starting = true; watch.itemId = np.Id;
+    var startSec = Math.max(0, (watchTarget() || 0));
+    var ps2 = (s && s.PlayState) || {};
+    var q = 'UserId=' + auth.userId + '&AutoOpenLiveStream=false&StartTimeTicks=' + Math.floor(startSec * 1e7);
+    if (ps2.MediaSourceId) q += '&MediaSourceId=' + ps2.MediaSourceId;
+    if (ps2.AudioStreamIndex != null) q += '&AudioStreamIndex=' + ps2.AudioStreamIndex;   // match her audio track
+    api('POST', '/Items/' + np.Id + '/PlaybackInfo?' + q, { DeviceProfile: {
+      MaxStreamingBitrate: 12000000,
+      DirectPlayProfiles: [ { Container: 'mp4,m4v', Type: 'Video', VideoCodec: 'h264', AudioCodec: 'aac,mp3' } ],
+      TranscodingProfiles: [ { Container: 'ts', Type: 'Video', Protocol: 'hls', VideoCodec: 'h264', AudioCodec: 'aac', Context: 'Streaming' } ]
+    }}).then(function(info){
+      var ms = (info && info.MediaSources && info.MediaSources[0]) || null;
+      if (!ms) { toast('no stream available'); stopWatch(); return; }
+      watch.psid = info.PlaySessionId;
+      var v = el('watchVid');
+      // Jellyfin's HLS playlist covers the full file from 0 - the timeline is ABSOLUTE.
+      // Seek once metadata is ready; the server transcodes from that point on demand.
+      watch.base = 0;
+      var src = ms.TranscodingUrl
+        ? (BASE + ms.TranscodingUrl)
+        : (BASE + '/Videos/' + np.Id + '/stream.' + (ms.Container || 'mp4') +
+           '?static=true&mediaSourceId=' + ms.Id + '&api_key=' + auth.token);
+      v.addEventListener('loadedmetadata', function onMeta(){
+        v.removeEventListener('loadedmetadata', onMeta);
+        var t2 = watchTarget();                 // recompute - fresher than startSec by now
+        try { v.currentTime = Math.max(0, t2 != null ? t2 : startSec); } catch (e) {}
+        v.play().catch(function(){});
+      });
+      v.src = src;
+      v.load();
+      v.play().catch(function(){});
+      el('watchWrap').classList.remove('hidden');
+      watch.startedAt = Date.now(); watch.starting = false;
+      watch.ema = null; watch.rateMode = 0; watch.lastSeekAt = 0;   // fresh sync state per stream
+    }).catch(function(e){ toast('watch failed: ' + e.message); watch.starting = false; stopWatch(); });
+  }
+  function watchSyncLoop(){
+    if (!watch.on || watch.starting) return;
+    var v = el('watchVid'), tgt = watchTarget(), t = watch.track;
+    if (tgt == null || !v.src) return;
+    if (Date.now() - watch.startedAt < 5000) { el('watchSync').textContent = 'starting…'; return; }
+    if (t.paused) { if (!v.paused) v.pause(); el('watchSync').textContent = 'paused with session'; return; }
+    if (v.paused) v.play().catch(function(){});
+    if (v.readyState < 3) { el('watchSync').textContent = 'buffering…'; return; }  // never fight the buffer
+    var d = tgt - v.currentTime;
+    watch.ema = (watch.ema == null) ? d : (watch.ema * 0.7 + d * 0.3);  // smooth estimate jitter
+    var e2 = watch.ema;
+    var sinceSeek = Date.now() - (watch.lastSeekAt || 0);
+    if (Math.abs(e2) > 10 && sinceSeek > 6000) {          // truly lost (she seeked): one jump, then settle
+      v.currentTime = Math.max(0, tgt);
+      watch.lastSeekAt = Date.now(); watch.ema = 0; watch.rateMode = 0; v.playbackRate = 1;
+      el('watchSync').textContent = 'jumped to live';
+      return;
+    }
+    // gentle 5% trim with hysteresis: engage beyond 3s drift, hold until back inside 0.8s
+    if (!watch.rateMode) {
+      if (e2 > 3)       { watch.rateMode = 1;  v.playbackRate = 1.05; }
+      else if (e2 < -3) { watch.rateMode = -1; v.playbackRate = 0.95; }
+      else if (v.playbackRate !== 1) v.playbackRate = 1;
+    } else if (watch.rateMode === 1) {
+      if (e2 < 0.8)  { watch.rateMode = 0; v.playbackRate = 1; }
+    } else {
+      if (e2 > -0.8) { watch.rateMode = 0; v.playbackRate = 1; }
+    }
+    el('watchSync').textContent = 'sync ' + (e2 >= 0 ? '+' : '') + e2.toFixed(1) + 's' + (watch.rateMode ? ' ⇢' : '');
+  }
+  window.watchFull = function(){
+    var v = el('watchVid');
+    if (v.webkitEnterFullscreen) { v.webkitEnterFullscreen(); }        // iPhone native player
+    else if (v.requestFullscreen) { v.requestFullscreen().catch(function(){}); }
+    else if (v.webkitRequestFullscreen) { v.webkitRequestFullscreen(); }
+  };
+  window.toggleWatch = function(){
+    if (watch.on) { stopWatch(); return; }
+    if (!lastState || !lastState.NowPlayingItem) { toast('nothing playing to watch'); return; }
+    watch.on = true;
+    el('watchBtn').classList.add('on');
+    watchTrackUpdate(lastState);
+    if (!watch.timer) watch.timer = setInterval(watchSyncLoop, 1000);
+  };
+  window.stopWatch = function(){
+    var hadPsid = watch.psid;
+    if (watch.timer) { clearInterval(watch.timer); }
+    var v = el('watchVid');
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    el('watchWrap').classList.add('hidden');
+    el('watchBtn').classList.remove('on');
+    watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
+              ema:null, rateMode:0, lastSeekAt:0 };
+    if (hadPsid) api('DELETE', '/Videos/ActiveEncodings?deviceId=' + devId() + '&playSessionId=' + hadPsid).catch(function(){});
+  };
+
+  // ---------- media segments (Intro Skipper etc.) ----------
+  var segCache = {}, curSeg = null;
+  function getSegs(itemId){
+    if (segCache[itemId]) return Promise.resolve(segCache[itemId]);
+    return api('GET', '/MediaSegments/' + itemId)
+      .then(function(r){ segCache[itemId] = (r && r.Items) || []; return segCache[itemId]; })
+      .catch(function(){ segCache[itemId] = []; return segCache[itemId]; });
+  }
+  function updateSegments(s, np){
+    getSegs(np.Id).then(function(list){
+      var pos = (s.PlayState && s.PlayState.PositionTicks) || 0;
+      curSeg = null;
+      for (var i = 0; i < list.length; i++) {
+        var g = list[i];                                   // skip only if >3s of segment remain
+        if (pos >= g.StartTicks && pos < g.EndTicks - 30000000) { curSeg = g; break; }
+      }
+      var b = el('skipSeg');
+      if (curSeg) {
+        b.textContent = 'Skip ' + (curSeg.Type || 'segment').toLowerCase() + ' ▸';
+        b.classList.remove('hidden');
+      } else { b.classList.add('hidden'); }
+    });
+  }
+  window.skipSegment = function(){
+    if (!curSeg || !sel) return;
+    api('POST', '/Sessions/' + sel + '/Playing/Seek?seekPositionTicks=' + curSeg.EndTicks)
+      .then(function(){ toast('skipped'); el('skipSeg').classList.add('hidden'); setTimeout(refresh, 700); })
+      .catch(function(e){ toast('failed: ' + e.message); });
+  };
+
+  // ---------- volume slider + message ----------
+  var volDrag = false;
+  el('vol').addEventListener('pointerdown', function(){ volDrag = true; });
+  el('vol').addEventListener('change', function(){
+    volDrag = false;
+    if (!sel) return;
+    api('POST', '/Sessions/' + sel + '/Command', { Name: 'SetVolume', Arguments: { Volume: String(el('vol').value) } })
+      .then(function(){ toast('volume ' + el('vol').value); }).catch(function(e){ toast('failed: ' + e.message); });
+  });
+  window.sendMsg = function(){
+    if (!sel) return;
+    var t = prompt('Message to this screen:');
+    if (!t) return;
+    api('POST', '/Sessions/' + sel + '/Command', { Name: 'DisplayMessage', Arguments: { Header: '📺 Remote', Text: t, TimeoutMs: '6000' } })
+      .then(function(){ toast('sent'); }).catch(function(e){ toast('failed: ' + e.message); });
+  };
+
+  // ---------- episode strip (watched state + progress from the CONTROLLED user) ----------
+  var epRenderKey = null;
+  function renderEpisodes(np){
+    if (!np || !np.SeriesId) { el('epsWrap').classList.add('hidden'); epRenderKey = null; return; }
+    // whose watched-state to show: the controlled session's user, not the remote login
+    var epUser = (lastState && lastState.UserId) || auth.userId;
+    var key = np.SeriesId + '|' + np.Id + '|' + epUser;
+    if (key === epRenderKey) return;                  // already rendered for this state
+    var build = function(items){
+      epRenderKey = key;
+      el('epsWrap').classList.remove('hidden');
+      el('epsTitle').textContent = (np.SeriesName || 'episodes') +
+        (lastState && lastState.UserName ? ' — ' + lastState.UserName + "'s progress" : '');
+      var box = el('eps'); box.innerHTML = '';
+      var curCard = null;
+      items.forEach(function(ep){
+        var card = document.createElement('button');
+        card.className = 'ep' + (ep.Id === np.Id ? ' cur' : '');
+        var tag = 'S' + (ep.ParentIndexNumber != null ? ep.ParentIndexNumber : '?') +
+                  'E' + (ep.IndexNumber != null ? ep.IndexNumber : '?');
+        var img = (ep.ImageTags && ep.ImageTags.Primary)
+          ? '<img loading="lazy" src="' + BASE + '/Items/' + ep.Id + '/Images/Primary?maxWidth=320&api_key=' + auth.token + '" alt="">'
+          : '<img alt="">';
+        var ud = ep.UserData || {};
+        var pct = ud.PlayedPercentage || 0;
+        var prog = (pct > 0 && pct < 97)
+          ? '<span class="prog"><i style="width:' + Math.round(pct) + '%"></i></span>' : '';
+        card.innerHTML = '<div class="thumb">' + img +
+          (ep.Id === np.Id ? '<span class="now">NOW</span>' : '') +
+          (ud.Played ? '<span class="seen">✓</span>' : '') +
+          prog + '</div>' +
+          '<div class="t"><b>' + tag + '</b> ' + (ep.Name || '') + '</div>';
+        card.onclick = function(){
+          api('POST', '/Sessions/' + sel + '/Playing?playCommand=PlayNow&itemIds=' + ep.Id)
+            .then(function(){ toast('playing ' + tag); setTimeout(refresh, 1200); })
+            .catch(function(e){ toast('failed: ' + e.message); });
+        };
+        box.appendChild(card);
+        if (ep.Id === np.Id) curCard = card;
+      });
+      if (curCard) {                                   // center current episode in the strip
+        box.scrollLeft = Math.max(0, curCard.offsetLeft - box.clientWidth / 2 + curCard.clientWidth / 2);
+      }
+    };
+    // always fetch fresh on episode/session change so checkmarks + progress stay current
+    api('GET', '/Shows/' + np.SeriesId + '/Episodes?userId=' + epUser + '&enableImages=true')
+      .then(function(res){ build((res && res.Items) || []); })
+      .catch(function(){
+        // non-admin remotes may not query another user's context - fall back to own view
+        if (epUser !== auth.userId) {
+          api('GET', '/Shows/' + np.SeriesId + '/Episodes?userId=' + auth.userId + '&enableImages=true')
+            .then(function(res){ build((res && res.Items) || []); })
+            .catch(function(){});
+        }
+      });
+  }
+
+  // ---------- commands ----------
+  window.ps = function(cmd){                 // PlaystateCommand
+    if (!sel) return;
+    api('POST', '/Sessions/' + sel + '/Playing/' + cmd).then(function(){
+      toast(cmd); setTimeout(refresh, 700);
+    }).catch(function(e){ toast('failed: ' + e.message); });
+  };
+  window.gc = function(name){                // GeneralCommand
+    if (!sel) return;
+    api('POST', '/Sessions/' + sel + '/Command', { Name: name, Arguments: {} })
+      .then(function(){ toast(name); }).catch(function(e){ toast('failed: ' + e.message); });
+  };
+  window.seekRel = function(deltaSec){
+    if (!lastState || !lastState.PlayState) return;
+    var pos = (lastState.PlayState.PositionTicks || 0) + deltaSec * 10000000;
+    if (pos < 0) pos = 0;
+    api('POST', '/Sessions/' + sel + '/Playing/Seek?seekPositionTicks=' + Math.floor(pos))
+      .then(function(){ toast((deltaSec > 0 ? '+' : '') + deltaSec + 's'); setTimeout(refresh, 700); })
+      .catch(function(e){ toast('failed: ' + e.message); });
+  };
+
+  // ---------- item dto cache (media streams + trickplay info) ----------
+  var dtoCache = {};
+  function getDto(itemId){
+    if (dtoCache[itemId]) return Promise.resolve(dtoCache[itemId]);
+    return api('GET', '/Items/' + itemId + '?userId=' + auth.userId).then(function(dto){
+      dtoCache[itemId] = dto || {}; return dtoCache[itemId];
+    });
+  }
+
+  // ---------- track / quality / speed sheets ----------
+  function getStreams(itemId){
+    var np = lastState && lastState.NowPlayingItem;
+    if (np && np.MediaStreams && np.MediaStreams.length) return Promise.resolve(np.MediaStreams);
+    return getDto(itemId).then(function(dto){ return (dto && dto.MediaStreams) || []; });
+  }
+  function gcArgs(name, args){
+    if (!sel) return;
+    api('POST', '/Sessions/' + sel + '/Command', { Name: name, Arguments: args })
+      .then(function(){ toast(name); closeSheet(); setTimeout(refresh, 800); })
+      .catch(function(e){ toast('failed: ' + e.message); });
+  }
+  function sheetOptions(title, opts){
+    el('sheetTitle').textContent = title;
+    var body = el('sheetBody'); body.innerHTML = '';
+    opts.forEach(function(o){
+      var b = document.createElement('button');
+      b.className = 'opt';
+      b.innerHTML = '<span class="lbl">' + o.label + '</span>' + (o.sel ? '<span class="check">✓</span>' : '');
+      b.onclick = o.act;
+      body.appendChild(b);
+    });
+    el('sheetWrap').classList.remove('hidden');
+  }
+  window.closeSheet = function(){ el('sheetWrap').classList.add('hidden'); };
+  el('sheetWrap').addEventListener('click', function(ev){
+    if (ev.target === el('sheetWrap')) closeSheet();
+  });
+
+  window.openSheet = function(kind){
+    if (!lastState || !lastState.NowPlayingItem) return;
+    var psx = lastState.PlayState || {};
+    if (kind === 'quality') {
+      var ladder = [
+        ['40 Mbps (max)', 40000000], ['20 Mbps', 20000000], ['10 Mbps', 10000000],
+        ['8 Mbps', 8000000], ['6 Mbps', 6000000], ['4 Mbps', 4000000],
+        ['3 Mbps', 3000000], ['1.5 Mbps', 1500000], ['720 kbps', 720000]
+      ];
+      sheetOptions('max stream quality', ladder.map(function(q){
+        return { label: q[0], sel: false, act: function(){ gcArgs('SetMaxStreamingBitrate', { Bitrate: String(q[1]) }); } };
+      }));
+      return;
+    }
+    if (kind === 'speed') {
+      var cur = psx.PlaybackRate || 1;
+      sheetOptions('playback speed', [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(function(r){
+        return { label: r + '×', sel: (Math.abs(cur - r) < 0.01),
+                 act: function(){ gcArgs('SetPlaybackRate', { PlaybackRate: String(r) }); } };
+      }));
+      return;
+    }
+    getStreams(lastState.NowPlayingItem.Id).then(function(streams){
+      if (kind === 'audio') {
+        var opts = streams.filter(function(m){ return m.Type === 'Audio'; }).map(function(m){
+          return { label: m.DisplayTitle || ('Track ' + m.Index),
+                   sel: psx.AudioStreamIndex === m.Index,
+                   act: function(){ gcArgs('SetAudioStreamIndex', { Index: String(m.Index) }); } };
+        });
+        sheetOptions('audio track', opts.length ? opts : [{ label: 'no audio tracks found', sel: false, act: closeSheet }]);
+      } else {
+        var off = (psx.SubtitleStreamIndex == null || psx.SubtitleStreamIndex < 0);
+        var opts2 = [{ label: 'Off', sel: off, act: function(){ gcArgs('SetSubtitleStreamIndex', { Index: '-1' }); } }]
+          .concat(streams.filter(function(m){ return m.Type === 'Subtitle'; }).map(function(m){
+            return { label: m.DisplayTitle || ('Subtitle ' + m.Index),
+                     sel: psx.SubtitleStreamIndex === m.Index,
+                     act: function(){ gcArgs('SetSubtitleStreamIndex', { Index: String(m.Index) }); } };
+          }));
+        sheetOptions('subtitle track', opts2);
+      }
+    }).catch(function(e){ toast('failed: ' + e.message); });
+  };
+
+  // ---------- seek bar: drag to scrub with trickplay preview, release to seek ----------
+  (function(){
+    var bar = el('bar'), peek = el('peek'), dragging = false, tp = null, tpItem = null, msid = null;
+    function loadTp(cb){
+      var np = lastState && lastState.NowPlayingItem;
+      if (!np) return cb();
+      if (tpItem === np.Id) return cb();
+      tp = null; msid = null; tpItem = np.Id;
+      getDto(np.Id).then(function(d){
+        var t = d && d.Trickplay;
+        if (t) {
+          var ks = Object.keys(t);
+          if (ks.length) {
+            msid = ks[0];
+            var ws2 = Object.keys(t[msid]);
+            if (ws2.length) tp = t[msid][ws2[0]];
+          }
+        }
+        cb();
+      }).catch(function(){ cb(); });
+    }
+    function frac(ev){
+      var r = bar.getBoundingClientRect();
+      return Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+    }
+    // 12.0 rejects ?api_key= on the trickplay route - fetch tiles with the auth header instead
+    var tileCache = {};
+    function setTileBg(url){
+      if (tileCache[url]) { peek.style.backgroundImage = 'url("' + tileCache[url] + '")'; return; }
+      fetch(url, { headers: { 'Authorization': authHeader(true) } })
+        .then(function(r){ return r.ok ? r.blob() : null; })
+        .then(function(b){
+          if (!b) return;
+          tileCache[url] = URL.createObjectURL(b);
+          if (dragging) peek.style.backgroundImage = 'url("' + tileCache[url] + '")';
+        }).catch(function(){});
+    }
+    function showPeek(f){
+      var np = lastState && lastState.NowPlayingItem;
+      if (!np || !np.RunTimeTicks) return;
+      var ticks = f * np.RunTimeTicks;
+      var bw = el('barWrap');
+      peek.style.left = (16 + f * (bw.clientWidth - 32)) + 'px';
+      el('peekT').textContent = fmt(ticks);
+      if (tp && tp.Width) {
+        var scale = 150 / tp.Width;
+        var idx = Math.floor((ticks / 10000) / tp.Interval);       // ticks->ms / interval(ms)
+        if (idx >= tp.ThumbnailCount) idx = tp.ThumbnailCount - 1;
+        if (idx < 0) idx = 0;
+        var per = tp.TileWidth * tp.TileHeight;
+        var tile = Math.floor(idx / per), k = idx % per;
+        var row = Math.floor(k / tp.TileWidth), col = k % tp.TileWidth;
+        peek.style.width = (tp.Width * scale) + 'px';
+        peek.style.height = (tp.Height * scale) + 'px';
+        setTileBg(BASE + '/Videos/' + tpItem + '/Trickplay/' + tp.Width + '/' + tile + '.jpg?mediaSourceId=' + msid);
+        peek.style.backgroundSize = (tp.Width * tp.TileWidth * scale) + 'px ' + (tp.Height * tp.TileHeight * scale) + 'px';
+        peek.style.backgroundPosition = (-col * tp.Width * scale) + 'px ' + (-row * tp.Height * scale) + 'px';
+      } else {
+        peek.style.width = '110px'; peek.style.height = '30px'; peek.style.backgroundImage = 'none';
+      }
+      peek.classList.remove('hidden');
+    }
+    bar.addEventListener('pointerdown', function(ev){
+      if (!lastState || !lastState.NowPlayingItem) return;
+      dragging = true;
+      try { bar.setPointerCapture(ev.pointerId); } catch (e) {}
+      loadTp(function(){ if (dragging) showPeek(frac(ev)); });
+      showPeek(frac(ev));
+    });
+    bar.addEventListener('pointermove', function(ev){ if (dragging) showPeek(frac(ev)); });
+    bar.addEventListener('pointerup', function(ev){
+      if (!dragging) return;
+      dragging = false;
+      peek.classList.add('hidden');
+      var np = lastState && lastState.NowPlayingItem;
+      if (!np || !np.RunTimeTicks || !sel) return;
+      var f = frac(ev);
+      api('POST', '/Sessions/' + sel + '/Playing/Seek?seekPositionTicks=' + Math.floor(f * np.RunTimeTicks))
+        .then(function(){ toast('seek ' + Math.round(f * 100) + '%'); setTimeout(refresh, 700); })
+        .catch(function(e){ toast('failed: ' + e.message); });
+    });
+    bar.addEventListener('pointercancel', function(){ dragging = false; peek.classList.add('hidden'); });
+  })();
+
+  // ---------- boot ----------
+  function show(){
+    el('login').classList.add('hidden'); el('app').classList.remove('hidden');
+    refresh();
+    startWs();
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(function(){ if (!wsOk) refresh(); }, 4000);   // poll = fallback only
+  }
+  try { auth = JSON.parse(localStorage.getItem(LSKEY) || 'null'); } catch (e) {}
+  if (auth && auth.token) show(); else el('login').classList.remove('hidden');
+})();
+</script>
+</body>
+</html>
