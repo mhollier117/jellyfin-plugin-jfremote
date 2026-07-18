@@ -202,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.5';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.6';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -294,7 +294,7 @@
   }
 
   // ---------- live updates: websocket (poll is the fallback) ----------
-  var ws = null, wsOk = false;
+  var ws = null, wsOk = false, lastWsAt = 0;
   function startWs(){
     if (!auth) return;
     try {
@@ -303,10 +303,11 @@
                 '&api_key=' + auth.token + '&deviceId=' + devId();
       ws = new WebSocket(url);
       ws.onopen = function(){
-        wsOk = true;
+        wsOk = true; lastWsAt = Date.now();
         ws.send(JSON.stringify({ MessageType: 'SessionsStart', Data: '0,1500' }));
       };
       ws.onmessage = function(ev){
+        lastWsAt = Date.now();
         var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
         if (m.MessageType === 'ForceKeepAlive' || m.MessageType === 'KeepAlive') {
           try { ws.send(JSON.stringify({ MessageType: 'KeepAlive' })); } catch (e) {}
@@ -319,10 +320,26 @@
     } catch (e) { wsOk = false; }
   }
 
+  // zombie-socket watchdog: the server pushes every 1.5s, so prolonged silence
+  // means the socket died without a close event (phone sleep, network switch).
+  // Kill it - polling takes over instantly and the reconnect loop revives it.
+  function wsHealthCheck(){
+    if (!wsOk) return;
+    if (Date.now() - lastWsAt > 10000 || (ws && ws.readyState !== 1)) {
+      wsOk = false;
+      try { ws.close(); } catch (e) {}
+    }
+  }
+
   // instant refresh when the phone wakes / tab becomes visible again
-  document.addEventListener('visibilitychange', function(){
-    if (!document.hidden && auth) refresh();
-  });
+  function onWake(){
+    if (!auth) return;
+    wsHealthCheck();
+    if (ws && ws.readyState !== 1) { try { ws.close(); } catch (e) {} wsOk = false; startWs(); }
+    refresh();
+  }
+  document.addEventListener('visibilitychange', function(){ if (!document.hidden) onWake(); });
+  window.addEventListener('pageshow', onWake);
 
   function sessLabel(s, withItem){
     var t = (s.NowPlayingItem ? '<span class="live">●</span>' : '') +
@@ -822,7 +839,7 @@
     refresh();
     startWs();
     if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(function(){ if (!wsOk) refresh(); }, 4000);   // poll = fallback only
+    pollTimer = setInterval(function(){ wsHealthCheck(); if (!wsOk) refresh(); }, 4000);   // poll = fallback only
   }
   try { auth = JSON.parse(localStorage.getItem(LSKEY) || 'null'); } catch (e) {}
   if (auth && auth.token) show(); else el('login').classList.remove('hidden');
