@@ -202,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.7';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.9';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -269,6 +269,7 @@
       .catch(function(e){ el('loginErr').textContent = e.message; });
   };
   window.logout = function(){
+    try { if (watch.on) stopWatch(); } catch (e) {}   // stop the stream while auth still works
     localStorage.removeItem(LSKEY); auth = null;
     if (pollTimer) clearInterval(pollTimer);
     try { if (ws) ws.close(); } catch (e) {}
@@ -287,9 +288,21 @@
     });
     // keep selection if still present; else prefer a playing session
     var cur = sessions.filter(function(s){ return s.Id === sel; })[0];
+    if (!cur && watch.on) {
+      // during watch-along, never silently retarget: hold the selection through
+      // transient list flicker - the renderNow grace period stops a dead watch
+      renderChips(); renderNow(); return;
+    }
     if (!cur) {
+      var lastDev = null;
+      try { lastDev = localStorage.getItem('jfremote_lastdev'); } catch (e) {}
       var playing = sessions.filter(function(s){ return s.NowPlayingItem; });
-      sel = (playing[0] || sessions[0] || {}).Id || null;
+      var mine = [];
+      if (lastDev) {
+        mine = playing.filter(function(s){ return s.DeviceId === lastDev; });
+        if (!mine.length) mine = sessions.filter(function(s){ return s.DeviceId === lastDev; });
+      }
+      sel = (mine[0] || playing[0] || sessions[0] || {}).Id || null;
     }
     renderChips(); renderNow();
   }
@@ -302,6 +315,9 @@
   function startWs(){
     if (!auth) return;
     try {
+      // never let two sockets coexist: silence + close any previous one so its
+      // onclose can't schedule a competing reconnect (orphan-socket leak)
+      if (ws) { ws.onopen = null; ws.onmessage = null; ws.onclose = null; ws.onerror = null; try { ws.close(); } catch (e) {} }
       // 12.0 reads ?ApiKey= on the socket; older servers read ?api_key= - send both
       var url = BASE.replace(/^http/, 'ws') + '/socket?ApiKey=' + auth.token +
                 '&api_key=' + auth.token + '&deviceId=' + devId();
@@ -319,7 +335,11 @@
         }
         if (m.MessageType === 'Sessions' && m.Data) applySessions(m.Data);
       };
-      ws.onclose = function(){ wsOk = false; setTimeout(function(){ if (auth) startWs(); }, 5000); };
+      ws.onclose = function(){
+        wsOk = false;
+        var me = ws;
+        setTimeout(function(){ if (auth && ws === me) startWs(); }, 5000);
+      };
       ws.onerror = function(){ try { ws.close(); } catch (e) {} };
     } catch (e) { wsOk = false; }
   }
@@ -365,7 +385,9 @@
       return {
         label: sessLabel(s, true),
         sel: s.Id === sel,
-        act: function(){ sel = s.Id; closeSheet(); renderChips(); renderNow(); }
+        act: function(){ sel = s.Id;
+          try { localStorage.setItem('jfremote_lastdev', s.DeviceId || ''); } catch (e) {}
+          closeSheet(); renderChips(); renderNow(); }
       };
     }));
   };
@@ -385,9 +407,15 @@
       renderEpisodes(null);
       el('skipSeg').classList.add('hidden');
       el('peek').classList.add('hidden');
-      if (watch.on) stopWatch();
+      if (watch.on) {
+        // autoplay-next (and session-list flicker) empties NowPlayingItem for a
+        // few seconds - ride out the gap; stop only if it stays empty
+        if (!watch.npGoneAt) { watch.npGoneAt = Date.now(); }
+        else if (Date.now() - watch.npGoneAt > 12000) { stopWatch(); }
+      }
       return;
     }
+    if (watch.npGoneAt) watch.npGoneAt = 0;
 
     var t = np.SeriesName ? np.SeriesName : np.Name;
     var sub = np.SeriesName
@@ -410,7 +438,7 @@
 
   // ---------- watch-along: follow the controlled session's stream, read-only ----------
   var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-                needSync:false, stallAt:0, offCount:0, lastSeekAt:0, suppressUntil:0 };
+                needSync:false, stallAt:0, offCount:0, lastSeekAt:0, lastStallSeekAt:0, suppressUntil:0, npGoneAt:0 };
   // our own buffering stalls desync us without any source action - but 'waiting'
   // ALSO fires on every seek we make ourselves, so only genuine, lengthy stalls
   // (well clear of our own seeks and startup) schedule a catch-up
@@ -421,8 +449,16 @@
     watch.stallAt = 0;
     if (len > 2000 &&
         Date.now() - (watch.lastSeekAt || 0) > 4000 &&
-        Date.now() - (watch.startedAt || 0) > 6000) {
-      watch.needSync = true;
+        Date.now() - (watch.startedAt || 0) > 6000 &&
+        Date.now() - (watch.lastStallSeekAt || 0) > 20000) {
+      // catch up only when genuinely behind: on a starved connection a seek
+      // lands in unbuffered video and just causes the NEXT stall - running a
+      // few seconds behind beats a seek-stall-seek loop
+      var tgt = watchTarget();
+      if (tgt != null && (tgt - el('watchVid').currentTime) > 4) {
+        watch.lastStallSeekAt = Date.now();
+        watch.needSync = true;
+      }
     }
   });
   function watchTrackUpdate(s){
@@ -430,30 +466,36 @@
     var np = s.NowPlayingItem;
     if (!np) { stopWatch(); return; }
     var paused = !!(s.PlayState && s.PlayState.IsPaused);
-    var ticks = (s.PlayState && s.PlayState.PositionTicks) || 0;
+    var raw = (s.PlayState && s.PlayState.PositionTicks) || 0;
     // EVENT-DRIVEN sync: two aligned players at 1.0x cannot drift, so we only ever
     // resync when something actually happened on the source - a pause/resume flip,
-    // or a reported position that jumped away from dead reckoning (= a seek).
-    var prevT = watch.track;
-    if (prevT) {
-      if (prevT.paused !== paused) {
-        watch.needSync = true; watch.suppressUntil = Date.now() + 1500;
-      } else if (!paused) {
-        var expected = prevT.ticks + (Date.now() - prevT.at) * 1e4;
-        if (Math.abs(ticks - expected) > 5e7) watch.needSync = true;   // >5s jump = source seek
+    // or a fresh position report that disagrees with dead reckoning (= a seek).
+    // ANCHOR MODEL: dead-reckon from the last moment PositionTicks CHANGED.
+    // 12.0 reports a live position on every push (the anchor just tracks it);
+    // 10.x stair-steps it between ~10s check-ins (the anchor extrapolates).
+    // Never mix in LastPlaybackCheckIn - on 12.0 that double-counts up to 10s
+    // and the resulting sawtooth estimate fires a resync storm.
+    var prev = watch.track, now = Date.now();
+    if (!prev) {
+      watch.track = { raw: raw, at: now, paused: paused };
+    } else if (prev.paused !== paused) {
+      watch.needSync = true; watch.suppressUntil = now + 1500;
+      watch.track = { raw: raw, at: now, paused: paused };
+    } else if (raw !== prev.raw) {                          // fresh position report
+      if (!paused) {
+        var expected = prev.raw + (now - prev.at) * 1e4;
+        if (Math.abs(raw - expected) > 5e7) watch.needSync = true;   // >5s off reckoning = source seek
+      } else {
+        watch.needSync = true;                              // moved while paused = seek
       }
+      watch.track = { raw: raw, at: now, paused: paused };
     }
-    // sessions only check in every ~10s - age-correct the reported position or we launch behind
-    if (!paused && s.LastPlaybackCheckIn) {
-      var lp = Date.parse(s.LastPlaybackCheckIn);
-      if (isFinite(lp)) ticks += Math.min(30000, Math.max(0, Date.now() - lp)) * 1e4;
-    }
-    watch.track = { ticks: ticks, at: Date.now(), paused: paused };
+    // raw unchanged: stale repeat of the last report - keep the anchor, extrapolate
     if (np.Id !== watch.itemId && !watch.starting) startWatchStream(np, s);   // follows autoplay
   }
   function watchTarget(){
     var t = watch.track; if (!t) return null;
-    return t.ticks / 1e7 + (t.paused ? 0 : (Date.now() - t.at) / 1000);
+    return t.raw / 1e7 + (t.paused ? 0 : (Date.now() - t.at) / 1000);
   }
   function startWatchStream(np, s){
     watch.starting = true; watch.itemId = np.Id;
@@ -543,7 +585,7 @@
     el('watchWrap').classList.add('hidden');
     el('watchBtn').classList.remove('on');
     watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-              needSync:false, stallAt:0, offCount:0, lastSeekAt:0, suppressUntil:0 };
+              needSync:false, stallAt:0, offCount:0, lastSeekAt:0, lastStallSeekAt:0, suppressUntil:0, npGoneAt:0 };
     if (hadPsid) api('DELETE', '/Videos/ActiveEncodings?deviceId=' + devId() + '&playSessionId=' + hadPsid).catch(function(){});
   };
 
@@ -580,6 +622,11 @@
   // ---------- volume slider + message ----------
   var volDrag = false;
   el('vol').addEventListener('pointerdown', function(){ volDrag = true; });
+  // a tap that never changes the value never fires 'change' - release the
+  // drag flag shortly after the pointer lifts so pushes can update the slider
+  function volRelease(){ setTimeout(function(){ volDrag = false; }, 400); }
+  el('vol').addEventListener('pointerup', volRelease);
+  el('vol').addEventListener('pointercancel', volRelease);
   el('vol').addEventListener('change', function(){
     volDrag = false;
     if (!sel) return;
