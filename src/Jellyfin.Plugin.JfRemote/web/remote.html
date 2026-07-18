@@ -41,7 +41,6 @@
 
   /* now playing card */
   #np{ background:var(--card); border-radius:16px; overflow:hidden; }
-  #poster{ width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#0a0d10; }
   #meta{ padding:14px 16px 4px; }
   #title{ font-size:1.05rem; font-weight:650; line-height:1.3; }
   #sub{ color:var(--dim); font-size:.85rem; margin-top:3px; }
@@ -157,7 +156,6 @@
       <div id="watchHud"><button onclick="watchFull()">⛶ full</button><button onclick="stopWatch()">✕ stop</button></div>
     </div>
     <div id="np">
-      <img id="poster" class="hidden" alt="">
       <div id="idle">nothing playing on this session</div>
       <div id="meta" class="hidden">
         <div id="title"></div>
@@ -204,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.3';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.5';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -362,7 +360,6 @@
     var np = s && s.NowPlayingItem;
     ['meta','barWrap','ctrls','row2','row3'].forEach(function(id){ el(id).classList.toggle('hidden', !np); });
     el('idle').classList.toggle('hidden', !!np);
-    el('poster').classList.toggle('hidden', !np);
     if (!np) {
       renderEpisodes(null);
       el('skipSeg').classList.add('hidden');
@@ -377,7 +374,6 @@
       : (np.ProductionYear || '');
     el('title').textContent = t;
     el('sub').textContent = sub + '   ·   ' + (s.UserName || '') + ' on ' + (s.DeviceName || s.Client);
-    el('poster').src = BASE + '/Items/' + np.Id + '/Images/Primary?maxWidth=800&api_key=' + auth.token;
 
     var pos = (s.PlayState && s.PlayState.PositionTicks) || 0, tot = np.RunTimeTicks || 0;
     el('fill').style.width = tot ? (pos / tot * 100) + '%' : '0%';
@@ -393,12 +389,20 @@
 
   // ---------- watch-along: follow the controlled session's stream, read-only ----------
   var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-                needSync:false, stalled:false, offCount:0, lastSeekAt:0, suppressUntil:0 };
-  // our own buffering stalls desync us without any source action: after the stall
-  // clears, schedule one catch-up seek
-  el('watchVid').addEventListener('waiting', function(){ if (watch.on) watch.stalled = true; });
+                needSync:false, stallAt:0, offCount:0, lastSeekAt:0, suppressUntil:0 };
+  // our own buffering stalls desync us without any source action - but 'waiting'
+  // ALSO fires on every seek we make ourselves, so only genuine, lengthy stalls
+  // (well clear of our own seeks and startup) schedule a catch-up
+  el('watchVid').addEventListener('waiting', function(){ if (watch.on) watch.stallAt = Date.now(); });
   el('watchVid').addEventListener('playing', function(){
-    if (watch.on && watch.stalled) { watch.stalled = false; watch.needSync = true; }
+    if (!watch.on || !watch.stallAt) return;
+    var len = Date.now() - watch.stallAt;
+    watch.stallAt = 0;
+    if (len > 2000 &&
+        Date.now() - (watch.lastSeekAt || 0) > 4000 &&
+        Date.now() - (watch.startedAt || 0) > 6000) {
+      watch.needSync = true;
+    }
   });
   function watchTrackUpdate(s){
     if (!watch.on || !s || s.Id !== sel) return;
@@ -456,6 +460,7 @@
       v.addEventListener('loadedmetadata', function onMeta(){
         v.removeEventListener('loadedmetadata', onMeta);
         var t2 = watchTarget();                 // recompute - fresher than startSec by now
+        watch.lastSeekAt = Date.now();          // our own seek - don't let the stall detector react
         try { v.currentTime = Math.max(0, t2 != null ? t2 : startSec); } catch (e) {}
         v.play().catch(function(){});
       });
@@ -517,7 +522,7 @@
     el('watchWrap').classList.add('hidden');
     el('watchBtn').classList.remove('on');
     watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-              needSync:false, stalled:false, offCount:0, lastSeekAt:0, suppressUntil:0 };
+              needSync:false, stallAt:0, offCount:0, lastSeekAt:0, suppressUntil:0 };
     if (hadPsid) api('DELETE', '/Videos/ActiveEncodings?deviceId=' + devId() + '&playSessionId=' + hadPsid).catch(function(){});
   };
 
