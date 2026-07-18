@@ -204,7 +204,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.1';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.2';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -393,13 +393,16 @@
 
   // ---------- watch-along: follow the controlled session's stream, read-only ----------
   var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-                ema:null, rateMode:0, lastSeekAt:0 };
+                ema:null, rateMode:0, lastSeekAt:0, suppressUntil:0, beyond:0 };
   function watchTrackUpdate(s){
     if (!watch.on || !s || s.Id !== sel) return;
     var np = s.NowPlayingItem;
     if (!np) { stopWatch(); return; }
     var paused = !!(s.PlayState && s.PlayState.IsPaused);
     var ticks = (s.PlayState && s.PlayState.PositionTicks) || 0;
+    // pause/resume flags arrive with socket latency - the estimate is briefly wrong
+    // around transitions, so suppress sync corrections for a moment
+    if (watch.track && watch.track.paused !== paused) watch.suppressUntil = Date.now() + 4000;
     // sessions only check in every ~10s - age-correct the reported position or we launch behind
     if (!paused && s.LastPlaybackCheckIn) {
       var lp = Date.parse(s.LastPlaybackCheckIn);
@@ -457,25 +460,36 @@
     if (t.paused) { if (!v.paused) v.pause(); el('watchSync').textContent = 'paused with session'; return; }
     if (v.paused) v.play().catch(function(){});
     if (v.readyState < 3) { el('watchSync').textContent = 'buffering…'; return; }  // never fight the buffer
+    if (Date.now() < (watch.suppressUntil || 0)) {         // state transition just happened - let it settle
+      if (v.playbackRate !== 1) v.playbackRate = 1;
+      watch.beyond = 0;
+      el('watchSync').textContent = 'settling…';
+      return;
+    }
     var d = tgt - v.currentTime;
     watch.ema = (watch.ema == null) ? d : (watch.ema * 0.7 + d * 0.3);  // smooth estimate jitter
     var e2 = watch.ema;
     var sinceSeek = Date.now() - (watch.lastSeekAt || 0);
     if (Math.abs(e2) > 10 && sinceSeek > 6000) {          // truly lost (she seeked): one jump, then settle
       v.currentTime = Math.max(0, tgt);
-      watch.lastSeekAt = Date.now(); watch.ema = 0; watch.rateMode = 0; v.playbackRate = 1;
+      watch.lastSeekAt = Date.now(); watch.ema = 0; watch.rateMode = 0; watch.beyond = 0;
+      watch.suppressUntil = Date.now() + 4000;
+      v.playbackRate = 1;
       el('watchSync').textContent = 'jumped to live';
       return;
     }
-    // gentle 5% trim with hysteresis: engage beyond 3s drift, hold until back inside 0.8s
+    // 3% trim with hysteresis: engage only after PERSISTENT >4s drift, hold until inside 1.25s
     if (!watch.rateMode) {
-      if (e2 > 3)       { watch.rateMode = 1;  v.playbackRate = 1.05; }
-      else if (e2 < -3) { watch.rateMode = -1; v.playbackRate = 0.95; }
-      else if (v.playbackRate !== 1) v.playbackRate = 1;
+      if (Math.abs(e2) > 4) { watch.beyond = (watch.beyond || 0) + 1; } else { watch.beyond = 0; }
+      if (watch.beyond >= 3) {                            // ~3s of confirmed real drift
+        watch.rateMode = (e2 > 0) ? 1 : -1;
+        v.playbackRate = (e2 > 0) ? 1.03 : 0.97;
+        watch.beyond = 0;
+      } else if (v.playbackRate !== 1) { v.playbackRate = 1; }
     } else if (watch.rateMode === 1) {
-      if (e2 < 0.8)  { watch.rateMode = 0; v.playbackRate = 1; }
+      if (e2 < 1.25)  { watch.rateMode = 0; v.playbackRate = 1; }
     } else {
-      if (e2 > -0.8) { watch.rateMode = 0; v.playbackRate = 1; }
+      if (e2 > -1.25) { watch.rateMode = 0; v.playbackRate = 1; }
     }
     el('watchSync').textContent = 'sync ' + (e2 >= 0 ? '+' : '') + e2.toFixed(1) + 's' + (watch.rateMode ? ' ⇢' : '');
   }
@@ -501,7 +515,7 @@
     el('watchWrap').classList.add('hidden');
     el('watchBtn').classList.remove('on');
     watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
-              ema:null, rateMode:0, lastSeekAt:0 };
+              ema:null, rateMode:0, lastSeekAt:0, suppressUntil:0, beyond:0 };
     if (hadPsid) api('DELETE', '/Videos/ActiveEncodings?deviceId=' + devId() + '&playSessionId=' + hadPsid).catch(function(){});
   };
 
