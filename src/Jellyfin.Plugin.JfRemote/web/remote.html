@@ -202,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.10';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.11';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -719,8 +719,17 @@
     var paused = !!(s.PlayState && s.PlayState.IsPaused);
     if (paused !== pendCmd.wasPaused) { pendCmd = null; return; }   // it landed
     if (Date.now() - pendCmd.at > 4000) {
-      pendCmd = null;
-      toast('⚠ player did not respond - their app/tab may need a reload');
+      var p = pendCmd; pendCmd = null;
+      if (!p.retried) {
+        // dropped (target socket was down) - resend as an EXPLICIT command:
+        // Pause/Unpause are idempotent, so this is safe even if the original
+        // toggle actually landed and the state report is just late
+        pendCmd = { sid: p.sid, wasPaused: p.wasPaused, at: Date.now(), retried: true };
+        api('POST', '/Sessions/' + p.sid + '/Playing/' + (p.wasPaused ? 'Unpause' : 'Pause'))
+          .then(function(){ toast('retrying…'); }).catch(function(){});
+      } else {
+        toast('⚠ player did not respond - their app/tab may need a reload');
+      }
     }
   }
   window.ps = function(cmd){                 // PlaystateCommand
