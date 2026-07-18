@@ -202,7 +202,7 @@
 <script>
 (function(){
   'use strict';
-  var VERSION = '2026-07-18.9';   // bump on every edit - drives the stale-cache auto-reload
+  var VERSION = '2026-07-18.10';   // bump on every edit - drives the stale-cache auto-reload
   // iOS home-screen apps cache the launch document aggressively; on each launch,
   // check the server for a newer build and reload once if found.
   function checkUpdate(){
@@ -217,6 +217,12 @@
       }).catch(function(){});
   }
   setTimeout(checkUpdate, 2500);
+  // iOS RESUMES home-screen apps from memory without reloading - a stale page
+  // can run for days if we only check at launch. Re-check on every resume,
+  // but never yank the page out from under an active watch-along stream.
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && !(window.__watchOn && window.__watchOn())) checkUpdate();
+  });
   // API base: page is served at {BaseUrl}/web/remote.html (file deploy) or
   // {BaseUrl}/JfRemote/ (plugin route) — strip our own path segment so
   // reverse-proxy subpaths (BaseUrl, e.g. /jellyfin) work in both contexts.
@@ -296,7 +302,10 @@
     if (!cur) {
       var lastDev = null;
       try { lastDev = localStorage.getItem('jfremote_lastdev'); } catch (e) {}
-      var playing = sessions.filter(function(s){ return s.NowPlayingItem; });
+      // an unpaused stream is almost always the one the user means to control -
+      // a paused session left open elsewhere shouldn't win the auto-pick
+      var playing = sessions.filter(function(s){ return s.NowPlayingItem && !(s.PlayState && s.PlayState.IsPaused); });
+      if (!playing.length) playing = sessions.filter(function(s){ return s.NowPlayingItem; });
       var mine = [];
       if (lastDev) {
         mine = playing.filter(function(s){ return s.DeviceId === lastDev; });
@@ -432,6 +441,7 @@
     var vl = s.PlayState && s.PlayState.VolumeLevel;
     if (vl != null && !volDrag) el('vol').value = vl;
     updateSegments(s, np);
+    verifyPend(s);
     watchTrackUpdate(s);
     renderEpisodes(np);
   }
@@ -439,6 +449,7 @@
   // ---------- watch-along: follow the controlled session's stream, read-only ----------
   var watch = { on:false, itemId:null, psid:null, base:0, timer:null, track:null, starting:false, startedAt:0,
                 needSync:false, stallAt:0, offCount:0, lastSeekAt:0, lastStallSeekAt:0, suppressUntil:0, npGoneAt:0 };
+  window.__watchOn = function(){ return !!watch.on; };   // for the resume update-check guard
   // our own buffering stalls desync us without any source action - but 'waiting'
   // ALSO fires on every seek we make ourselves, so only genuine, lengthy stalls
   // (well clear of our own seeks and startup) schedule a catch-up
@@ -699,8 +710,24 @@
   }
 
   // ---------- commands ----------
+  // verify-on-send: the server returns 204 as soon as it ACCEPTS a command -
+  // if the target's socket is dead it is silently dropped. For pause/resume,
+  // watch the session state actually flip and warn when it doesn't.
+  var pendCmd = null;
+  function verifyPend(s){
+    if (!pendCmd || !s || s.Id !== pendCmd.sid) return;
+    var paused = !!(s.PlayState && s.PlayState.IsPaused);
+    if (paused !== pendCmd.wasPaused) { pendCmd = null; return; }   // it landed
+    if (Date.now() - pendCmd.at > 4000) {
+      pendCmd = null;
+      toast('⚠ player did not respond - their app/tab may need a reload');
+    }
+  }
   window.ps = function(cmd){                 // PlaystateCommand
     if (!sel) return;
+    if (cmd === 'PlayPause' || cmd === 'Pause' || cmd === 'Unpause') {
+      pendCmd = { sid: sel, wasPaused: !!(lastState && lastState.PlayState && lastState.PlayState.IsPaused), at: Date.now() };
+    }
     api('POST', '/Sessions/' + sel + '/Playing/' + cmd).then(function(){
       toast(cmd); setTimeout(refresh, 700);
     }).catch(function(e){ toast('failed: ' + e.message); });
